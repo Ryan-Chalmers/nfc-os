@@ -1,0 +1,20 @@
+[Unit]
+Description=NFC OS fullscreen cartridge shell
+After=network.target graphical.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/nfc-os
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/opt/nfc-os/src
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/pi/.Xauthority
+Environment=NFC_OS_LOG_FILE=/var/log/nfc-os.log
+ExecStart=/opt/nfc-os/.venv/bin/python /opt/nfc-os/main.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,11 @@
+# Optional: install as a custom X session so the display manager offers "NFC OS".
+# Typical path on Raspberry Pi OS:
+#   sudo cp xsession-openbox.desktop.example /usr/share/xsessions/nfc-os-openbox.desktop
+#
+# Contents example (adjust paths and TryExec):
+#
+# [Desktop Entry]
+# Name=NFC OS (Openbox)
+# Comment=Minimal window manager + NFC OS shell
+# Exec=/opt/nfc-os/deploy/pi/start-openbox-with-nfc-os.sh
+# Type=Application

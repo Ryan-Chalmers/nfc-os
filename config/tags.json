@@ -1,0 +1,24 @@
+{
+  "meta": {
+    "home_uids": ["00000000"],
+    "double_scan_eject": true,
+    "presence_mode": true
+  },
+  "tags": [
+    {
+      "uid": "AA11BB22",
+      "kind": "command",
+      "payload": "echo Playing playlist"
+    },
+    {
+      "uid": "CC33DD44",
+      "kind": "media_control",
+      "payload": "toggle_play_pause"
+    },
+    {
+      "uid": "EE55FF66",
+      "kind": "url",
+      "payload": "https://example.com"
+    }
+  ]
+}
