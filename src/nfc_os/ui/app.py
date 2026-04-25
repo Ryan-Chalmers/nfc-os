@@ -183,7 +183,8 @@ def run_qt() -> None:
     event_queue: queue.Queue = queue.Queue()
     ui_queue: queue.Queue[UiOperation | None] = queue.Queue()
 
-    StdinEventSource(event_queue)
+    # Keep GUI alive when launched from startx/autostart where stdin may be closed.
+    StdinEventSource(event_queue, shutdown_on_eof=False)
     supervisor_thread, stop_supervisor = start_supervisor_thread(
         event_queue, specs, meta, ui_queue, logger
     )

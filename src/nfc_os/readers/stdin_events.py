@@ -19,8 +19,9 @@ class StdinEventSource:
       quit     enqueue shutdown (None)
     """
 
-    def __init__(self, event_queue: queue.Queue) -> None:
+    def __init__(self, event_queue: queue.Queue, *, shutdown_on_eof: bool = False) -> None:
         self._event_queue = event_queue
+        self._shutdown_on_eof = shutdown_on_eof
         self._thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._thread.start()
 
@@ -42,4 +43,7 @@ class StdinEventSource:
                     self._event_queue.put(NfcMessage(kind="tag_out", uid=None))
                     continue
         finally:
-            self._event_queue.put(None)
+            # In GUI/kiosk launches stdin is often not interactive and can close
+            # immediately; do not auto-shutdown unless explicitly requested.
+            if self._shutdown_on_eof:
+                self._event_queue.put(None)
