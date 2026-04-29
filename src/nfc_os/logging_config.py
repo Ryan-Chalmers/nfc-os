@@ -2,6 +2,17 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
+
+
+def _default_log_file() -> Path:
+    state_home = Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state"))
+    primary = state_home / "nfc-os" / "nfc-os.log"
+    try:
+        primary.parent.mkdir(parents=True, exist_ok=True)
+        return primary
+    except OSError:
+        return Path("/tmp/nfc-os.log")
 
 
 def configure_logging() -> logging.Logger:
@@ -16,12 +27,15 @@ def configure_logging() -> logging.Logger:
     console = logging.StreamHandler()
     console.setFormatter(formatter)
 
-    log_file = os.getenv("NFC_OS_LOG_FILE")
+    log_file = os.getenv("NFC_OS_LOG_FILE") or str(_default_log_file())
     handlers: list[logging.Handler] = [console]
-    if log_file:
+    try:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         handlers.append(file_handler)
+    except OSError:
+        # Keep console logging alive even if file path is not writable.
+        pass
 
     class DefaultFieldsFilter(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
