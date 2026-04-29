@@ -18,7 +18,12 @@
     {
       "uid": "EE55FF66",
       "kind": "url",
-      "payload": "https://example.com"
+      "payload": "https://www.youtube.com/watch?v=MrSYP-cotdg&autoplay=1&mute=1"
+    },
+    {
+      "uid": "LOCAL0001",
+      "kind": "command",
+      "payload": "/opt/nfc-os/scripts/play-local-video.sh demo.mp4"
     }
   ]
 }

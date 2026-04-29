@@ -26,10 +26,15 @@ htmlcov/
 .env
 .env.*
 !.env.example
+config/tags.json
 
 # Logs (e.g. NFC_OS_LOG_FILE on Pi)
 *.log
 logs/
+
+# Runtime media (videos/audio); keep README only
+media/*
+!media/README.md
 
 # OS noise
 .DS_Store

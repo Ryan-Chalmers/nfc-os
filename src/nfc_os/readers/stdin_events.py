@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import queue
 import sys
 import threading
 from typing import Literal
 
 from nfc_os.nfc_events import NfcMessage
+
+_logger = logging.getLogger("nfc_os")
 
 
 def process_dev_line(
@@ -28,6 +31,11 @@ def process_dev_line(
     text = line.strip()
     if not text:
         return False
+    if mode == "gui_submit":
+        _logger.info(
+            "dev_line",
+            extra={"uid": "-", "action": "dev_line", "payload": text[:300]},
+        )
     lower = text.lower()
     if lower in {"quit", "exit", "q"}:
         if mode == "gui_submit":

@@ -138,6 +138,11 @@ class SupervisorEngine:
         )
 
     def _start_spec(self, spec: CartridgeSpec) -> None:
+        preview = spec.payload if len(spec.payload) <= 200 else f"{spec.payload[:197]}..."
+        self._logger.info(
+            "cartridge_start",
+            extra={"uid": spec.uid, "action": spec.kind, "payload": preview},
+        )
         self._current_uid = spec.uid
         self._current_spec = spec
         self._notify_ui(UiOpRunning(uid=spec.uid, kind=spec.kind, payload=spec.payload))

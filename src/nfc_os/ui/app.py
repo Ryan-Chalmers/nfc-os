@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -14,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -42,6 +45,33 @@ try:
 except ImportError:
     QWebEngineView = None  # type: ignore[misc, assignment]
     _WEBENGINE_AVAILABLE = False
+
+
+class _LogEmitter(QObject):
+    """Thread-safe bridge: logging.Handler.emit runs in worker threads."""
+
+    text = Signal(str)
+
+
+class _UiLogHandler(logging.Handler):
+    """Append formatted ``nfc_os`` log lines into the Qt UI (queued to GUI thread)."""
+
+    def __init__(self, emitter: _LogEmitter) -> None:
+        super().__init__(level=logging.INFO)
+        self._emitter = emitter
+        self.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s "
+                "uid=%(uid)s action=%(action)s payload=%(payload)s"
+            )
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            self._emitter.text.emit(msg)
+        except Exception:
+            self.handleError(record)
 
 
 class MainWindow(QMainWindow):
@@ -100,9 +130,23 @@ class MainWindow(QMainWindow):
         outer.setSpacing(0)
         outer.addWidget(self._stack, stretch=1)
 
-        dev_row = QWidget()
-        dev_row.setObjectName("DevRow")
-        dev_lay = QHBoxLayout(dev_row)
+        self._log_emitter = _LogEmitter(self)
+        self._log_view = QPlainTextEdit()
+        self._log_view.setObjectName("UiLog")
+        self._log_view.setReadOnly(True)
+        self._log_view.setMaximumBlockCount(400)
+        self._log_view.setMinimumHeight(72)
+        self._log_view.setMaximumHeight(120)
+        self._log_view.setPlaceholderText("Log — dev lines, cartridge events, ejects…")
+        self._log_emitter.text.connect(
+            self._append_ui_log,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        outer.addWidget(self._log_view)
+
+        self._dev_row = QWidget()
+        self._dev_row.setObjectName("DevRow")
+        dev_lay = QHBoxLayout(self._dev_row)
         dev_lay.setContentsMargins(8, 6, 8, 6)
         dev_lay.setSpacing(8)
         dev_hint = QLabel("Test tags:")
@@ -117,9 +161,13 @@ class MainWindow(QMainWindow):
         dev_lay.addWidget(dev_hint)
         dev_lay.addWidget(self._dev_input, stretch=1)
         dev_lay.addWidget(dev_send)
-        outer.addWidget(dev_row)
+        outer.addWidget(self._dev_row)
 
         self.setCentralWidget(central_outer)
+
+        self._debug_chrome_visible = True
+        self._toggle_debug_shortcut = QShortcut(QKeySequence("Ctrl+1"), self)
+        self._toggle_debug_shortcut.activated.connect(self._toggle_debug_chrome)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._drain_ui_queue)
@@ -142,7 +190,21 @@ class MainWindow(QMainWindow):
             "QPushButton#DevSend { background-color: #21262d; color: #e6edf3; "
             "border: 1px solid #30363d; border-radius: 4px; padding: 6px 14px; }"
             "QPushButton#DevSend:hover { background-color: #30363d; }"
+            "QPlainTextEdit#UiLog { background-color: #0d1117; color: #8b949e; "
+            "border-top: 1px solid #30363d; border-bottom: none; border-left: none; "
+            "border-right: none; font-family: monospace; font-size: 11px; "
+            "padding: 4px 8px; selection-background-color: #30363d; }"
         )
+
+    def _append_ui_log(self, text: str) -> None:
+        self._log_view.appendPlainText(text.rstrip())
+
+    def _toggle_debug_chrome(self) -> None:
+        self._debug_chrome_visible = not self._debug_chrome_visible
+        self._log_view.setVisible(self._debug_chrome_visible)
+        self._dev_row.setVisible(self._debug_chrome_visible)
+        state = "shown" if self._debug_chrome_visible else "hidden"
+        self.statusBar().showMessage(f"Debug UI {state} (Ctrl+1)", 3000)
 
     def _submit_dev_line(self) -> None:
         text = self._dev_input.text()
@@ -188,9 +250,12 @@ class MainWindow(QMainWindow):
             self._clear_web()
         elif isinstance(op, UiOpRunning):
             self._stack.setCurrentIndex(1)
-            self._status_label.setText(
-                f"<b>Running</b><br/>UID {op.uid}<br/>kind <code>{op.kind}</code>"
-            )
+            is_url = op.kind == "url"
+            self._status_label.setVisible(not is_url)
+            if not is_url:
+                self._status_label.setText(
+                    f"<b>Running</b><br/>UID {op.uid}<br/>kind <code>{op.kind}</code>"
+                )
         elif isinstance(op, UiOpLoadUrl):
             if _WEBENGINE_AVAILABLE and QWebEngineView is not None:
                 if self._web_engine is None:
@@ -217,15 +282,27 @@ class MainWindow(QMainWindow):
             self._web_engine.setHtml("<html><body></body></html>")
         elif self._url_fallback is not None:
             self._url_fallback.clear()
+        self._status_label.setVisible(True)
 
 
 def _repo_root() -> Path:
     here = Path(__file__).resolve()
     for parent in [here, *here.parents]:
-        candidate = parent / "config" / "tags.json"
-        if candidate.exists():
+        tags_path = parent / "config" / "tags.json"
+        example_path = parent / "config" / "tags.example.json"
+        if tags_path.exists() or example_path.exists():
             return parent
     return Path.cwd()
+
+
+def _ensure_local_config(config_path: Path) -> Path:
+    if config_path.exists():
+        return config_path
+    example_path = config_path.with_name("tags.example.json")
+    if example_path.exists():
+        config_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return config_path
+    raise FileNotFoundError(f"Missing config: {config_path}")
 
 
 def run_qt() -> None:
@@ -233,8 +310,7 @@ def run_qt() -> None:
         config_path = Path(os.environ["NFC_OS_CONFIG"]).expanduser().resolve()
     else:
         config_path = _repo_root() / "config" / "tags.json"
-    if not config_path.exists():
-        raise FileNotFoundError(f"Missing config: {config_path}")
+    config_path = _ensure_local_config(config_path)
 
     specs, meta = load_cartridge_config(config_path)
     logger = configure_logging()
@@ -252,6 +328,9 @@ def run_qt() -> None:
     )
 
     window = MainWindow(ui_queue, stop_supervisor, event_queue)
+    ui_log_handler = _UiLogHandler(window._log_emitter)
+    logger.addHandler(ui_log_handler)
+
     window.showFullScreen()
     window.raise_()
     window.activateWindow()
@@ -276,6 +355,8 @@ def run_qt() -> None:
     try:
         app.exec()
     finally:
+        logger.removeHandler(ui_log_handler)
+        ui_log_handler.close()
         stop_supervisor.set()
         try:
             event_queue.put(None)
