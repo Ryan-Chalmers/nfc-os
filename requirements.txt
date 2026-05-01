@@ -1,2 +1,3 @@
 # Qt fullscreen shell (64-bit Raspberry Pi OS / desktop dev)
 PySide6>=6.6.0
+pyscard>=2.0.0

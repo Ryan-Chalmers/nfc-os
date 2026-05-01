@@ -59,13 +59,14 @@ def main() -> None:
         return
 
     try:
-        from nfc_os.ui.app import run_qt
+        from nfc_os.ui.app import configure_qt_webengine_chromium_env, run_qt
     except ImportError as exc:
         raise SystemExit(
             "Qt UI requires PySide6. Install with: pip install -r requirements.txt\n"
             f"Original error: {exc}"
         ) from exc
 
+    configure_qt_webengine_chromium_env()
     run_qt()
 
 

@@ -15,6 +15,36 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+If `pip install pyscard` fails to build the native extension, install PC/SC headers and SWIG, then retry:
+
+```bash
+sudo apt install -y swig libpcsclite-dev
+```
+
+### USB NFC reader (PC/SC, e.g. ACS ACR1252U)
+
+The ACR1252U and similar readers use the system **PC/SC** stack (`pcscd`), not a custom kernel driver.
+
+1. Install the daemon, client library, CCID driver, and the `pcsc_scan` diagnostic tool:
+
+   ```bash
+   sudo apt update
+   sudo apt install -y pcscd libpcsclite1 libccid pcsc-tools
+   sudo systemctl enable --now pcscd
+   ```
+
+2. Plug in the reader and run `pcsc_scan`. You should see the reader by name; tapping a tag should show activity. If the reader never appears, confirm USB power and try the vendor **acsccid** driver from ACS for your OS version.
+
+3. **Polkit (no sudo for `pcsc_scan` / NFC OS):** On many images, `pcsc_scan` without sudo fails with `SCardEstablishContext: Access denied` even when `/run/pcscd/pcscd.comm` is world-writable. A rule under `/etc/polkit-1/rules.d/` fixes that **permanently** (it survives reboots). To reproduce on another machine from this repo:
+
+   ```bash
+   cd /opt/nfc-os   # or your checkout path
+   sudo bash deploy/pi/install-polkit-pcsc.sh          # uses the user who ran sudo
+   sudo bash deploy/pi/install-polkit-pcsc.sh kiosk   # or pass the kiosk username explicitly
+   ```
+
+4. Run NFC OS with PC/SC enabled (see `NFC_OS_USE_PCSC` below).
+
 ## Run (default: Qt fullscreen)
 
 From the repository root:
@@ -22,6 +52,13 @@ From the repository root:
 ```bash
 export PYTHONPATH=src
 python main.py
+```
+
+With a USB PC/SC reader (after installing `pcscd` and `pyscard`):
+
+```bash
+export PYTHONPATH=src
+NFC_OS_USE_PCSC=1 python main.py
 ```
 
 Stdin mock NFC (works over SSH):
@@ -52,7 +89,7 @@ Each tag entry uses **`kind`** + **`payload`**:
 
 | `kind` | Behavior |
 | --- | --- |
-| `url` | Loads URL in embedded **Qt WebEngine** (fallback label if WebEngine missing) |
+| `url` | On ARM (Raspberry Pi) launches a **system browser** on `DISPLAY=:0` (Chromium / Firefox) and kills it on eject; on other platforms loads in embedded **Qt WebEngine**. See `NFC_OS_URL_*` / `NFC_OS_BROWSER*` envs. |
 | `command` | `shell=True` subprocess while running; eject kills it |
 | `script` | Executes script path; eject kills it |
 | `media_control` | Runs the synchronous stub; eject with `-` / home / double-scan |
@@ -67,6 +104,32 @@ Legacy entries using `action` + `payload` (`run_command`, `run_script`, `media_c
 | `NFC_OS_CONFIG` | Absolute path to an alternate `tags.json` |
 | `NFC_OS_LOG_FILE` | Append structured logs to a file |
 | `NFC_OS_HOME` | Root install path for `deploy/pi/run-nfc-os.sh` |
+| `NFC_OS_USE_PCSC` | If `1`, `true`, `yes`, or `on`, run a PC/SC reader monitor so USB readers feed the same event queue as the stdin/dev mock. By default the monitor runs in a **separate child process** (`python -m nfc_os.readers.pcsc_worker_main`) so `smartcard.scard` is never loaded inside the Qt process; this avoids native crashes alongside WebEngine. Set `NFC_OS_PCSC_INPROCESS=1` to use the legacy in-thread `CardMonitor` (debug only) |
+| `NFC_OS_PCSC_READER` | Optional substring (case-insensitive) to match one reader when multiple PC/SC devices exist (e.g. `ACR1252`) |
+| `NFC_OS_PCSC_INPROCESS` | If truthy, register the in-process pyscard `CardMonitor` instead of the subprocess monitor (debug only) |
+| `NFC_OS_URL_EXTERNAL` | Force URL cartridges to launch a system browser even on non-ARM hosts |
+| `NFC_OS_URL_EMBEDDED` | Force URL cartridges to use embedded Qt WebEngine even on ARM (crash-prone on Raspberry Pi) |
+| `NFC_OS_BROWSER` | Path or name of the browser binary to use for URL cartridges (e.g. `/usr/bin/chromium`, `firefox-esr`). Without this, NFC OS searches `chromium-browser`, `chromium`, `firefox-esr`, `firefox`, `epiphany-browser`, `midori`, `falkon` and ignores `$BROWSER` (Cursor SSH sets it to a host helper that opens URLs on the workstation) |
+| `NFC_OS_BROWSER_KIOSK` | If truthy, pass `--kiosk` to Chromium-style browsers |
+| `NFC_OS_DROP_BROWSER_ENV` | If truthy, also strip `$BROWSER` even when it doesn't look like a Cursor SSH helper |
+| `NFC_OS_WEBENGINE_VERBOSE` | If truthy, append Chromium `--enable-logging=stderr --v=1` to `QTWEBENGINE_CHROMIUM_FLAGS` (only relevant when embedded WebEngine is in use) |
+| `NFC_OS_CURSOR_HIDE_MS` | Milliseconds of pointer/keyboard inactivity before hiding the cursor (default `4000`, clamped 500–60000) |
+
+When `NFC_OS_USE_PCSC` is enabled, the Qt shell still accepts stdin and **Test tags** dev lines; avoid mixing fake `+UID` events with a live tag on the reader if you care about consistent presence state.
+
+### URL cartridges on Raspberry Pi
+
+Embedded Qt WebEngine + Chromium tends to SIGSEGV on Raspberry Pi when the renderer first tries to paint a complex page. NFC OS detects ARM at startup and launches **a real system browser** on the local display instead. Install one if you don't already have it:
+
+```bash
+sudo apt install -y chromium       # Debian trixie / current Raspberry Pi OS
+# or:
+sudo apt install -y chromium-browser   # older releases
+# or:
+sudo apt install -y firefox-esr
+```
+
+Tag eject (`tag_out`, double-scan, home UID) terminates the browser child so the home screen returns immediately.
 
 ## Raspberry Pi graphical session (minimal X11 + Openbox)
 
@@ -109,7 +172,7 @@ sudo systemctl status nfc-os
 - `src/nfc_os/ui/app.py` — fullscreen shell + UI queue pump
 - `src/nfc_os/supervisor.py` — cartridge state machine, child watcher, stdin events
 - `src/nfc_os/cartridge.py` — config parsing + launcher helpers
-- `src/nfc_os/readers/` — HAL (`MockReader` for CLI) and stdin event source for Qt mock
+- `src/nfc_os/readers/` — HAL (`MockReader` for CLI), stdin event source for Qt mock, optional `pcsc_subprocess` (default; runs `pcsc_worker_main` as a child) and `pcsc_events` (legacy in-thread `CardMonitor`) for USB PC/SC readers
 
 ## Module entrypoint
 
